@@ -1,0 +1,22 @@
+name: FalconURL
+description: "User function that return the correct Falcon URL based on region."
+visualization:
+  options:
+    ccolumns: '[{"type":"field","fieldName":"@timestamp","width":210},{"type":"field","fieldName":"@rawstring"}]'
+    newestAtBottom: "true"
+    showOnlyFirstLine: "false"
+  type: list-view
+$schema: https://schemas.humio.com/query/v0.1.0
+timeInterval:
+  isLive: false
+  start: 24h
+queryString: |-
+  "falcon.region" := ?{region="US-1"}
+  | "falcon.region" := upper("falcon.region")
+  | case {
+      "falcon.region" =  "US-1" | "falcon.url" := "https://falcon.crowdstrike.com";
+      "falcon.region" = "US-2" | "falcon.url" := "https://falcon.us-2.crowdstrike.com";
+      "falcon.region" = "EU-1"  OR "falcon.region" = "EU-1" | "falcon.url" := "https://falcon.eu-1.crowdstrike.com";
+      "falcon.region" = "US-GOV-1" | "falcon.url" := "https://falcon.laggar.gcw.crowdstrike.com";
+      @error.function := format("Invalid region \"%s\" selected!", field="falcon.region")
+  }

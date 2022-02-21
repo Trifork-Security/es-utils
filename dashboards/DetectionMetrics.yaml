@@ -1,0 +1,154 @@
+name: Detection Metrics
+description: "Metrics around detections"
+timeSelector: {}
+sharedTimeInterval:
+  enabled: false
+  isLive: false
+  start: 1d
+widgets:
+  d85032da-46a7-4ecc-8bf4-5f46499704af:
+    x: 0
+    y: 3
+    height: 4
+    queryString: |-
+      $crowdstrike/es-utils:filter()
+      | metadata.eventType =~ in(values=["DetectionSummaryEvent", "UserActivityAuditEvent"]) // Look for detection creaton event and update events (audit)
+      | case {
+          metadata.eventType="DetectionSummaryEvent"| event.new_state := "new" | event.detection_id := rename(event.DetectId); // Detection creations
+          event.ServiceName=detections event.OperationName=detection_update event.detection_id = * // Detection updates
+      }
+      | case { // Set high-level (open / In Progress / Closed) state based on current state
+          event.new_state =~ in(values=["new", "reopened"]) | state := "Open";
+          event.new_state = "in_progress" | state := "In Progress";
+          * | state := "Closed"
+      }
+      | groupBy(event.detection_id, function=[count(metadata.eventType, distinct=True), min(@timestamp, as=start), max(@timestamp, as=end), selectLast(state)]) // distinct of ExternalApiType is to see if we both have the creation and audit events
+      | _count = 2 state = "Closed" // We have the creation event of the detection and latest state of event is Closed
+      | duration:= end-start // Get the duration from new to close
+      | avg(duration) // Average
+    start: 7d
+    width: 4
+    options:
+      scale: time
+      valueSuffix: ""
+      unit-scaling-enabled: true
+      yAxisTitle: "avg: open -> closed"
+      input-unit: milliseconds
+      dp: 0
+    visualization: simple-gauge
+    title: Mean Time To Resolve
+    type: query
+  82c923a2-e6ad-4032-8500-415005235565:
+    x: 4
+    y: 3
+    height: 4
+    queryString: |-
+      metadata.eventType =~ in(values=["DetectionSummaryEvent", "UserActivityAuditEvent"]) // Look for detection creaton event and update events (audit)
+      | case {
+          metadata.eventType="DetectionSummaryEvent"| event.new_state := "new" | event.detection_id := rename(event.DetectId);
+          event.ServiceName=detections event.OperationName=detection_update event.detection_id = *
+      }
+      | case { // Set high-level (open / In Progress / Closed) state based on current state
+          event.new_state =~ in(values=["new", "reopened"]) | state := "Open";
+          event.new_state = "in_progress" | state := "In Progress";
+          * | state := "Closed"
+      }
+      | state != Closed
+      | groupBy(event.detection_id, function=[{state="Open" | min(@timestamp)}, {state="In Progress" | max(@timestamp)}, selectLast(state)])
+      | state = "In Progress"
+      | _min=* _max=*
+      | duration := _max - _min
+      | avg(duration)
+    start: 7d
+    width: 4
+    options:
+      scale: time
+      valueSuffix: ""
+      unit-scaling-enabled: true
+      yAxisTitle: "avg: open -> in progress"
+      input-unit: milliseconds
+      dp: 0
+    visualization: simple-gauge
+    title: Mean Time To React
+    type: query
+  f75713f7-72b9-4051-b759-978a864783de:
+    x: 8
+    y: 3
+    height: 4
+    queryString: |-
+      metadata.eventType =~ in(values=["DetectionSummaryEvent", "UserActivityAuditEvent"]) // Look for detection creaton event and update events (audit)
+      | case {
+          metadata.eventType="DetectionSummaryEvent"| event.new_state := "new" | event.detection_id := rename(event.DetectId);
+          event.ServiceName=detections event.OperationName=detection_update event.detection_id = *
+      }
+      | case { // Set high-level (open / In Progress / Closed) state based on current state
+          event.new_state =~ in(values=["new", "reopened"]) | state := "Open";
+          event.new_state = "in_progress" | state := "In Progress";
+          * | state := "Closed"
+      }
+      | groupBy("event.detection_id", function=[{state="In Progress" | min(@timestamp)}, {state="Closed" | max(@timestamp)}, selectLast(state)])
+      | state = "Closed" _min=* _max=*
+      | duration := _max - _min
+      | avg(duration)
+    start: 7d
+    width: 4
+    options:
+      scale: time
+      valueSuffix: ""
+      unit-scaling-enabled: true
+      yAxisTitle: "avg: in progress -> closed"
+      input-unit: milliseconds
+      dp: 0
+    visualization: simple-gauge
+    title: Mean Time To Resolve (from started)
+    type: query
+  0cca9d2d-1f3c-4dce-af97-41e56fab6a19:
+    x: 0
+    y: 7
+    height: 4
+    queryString: |-
+      $crowdstrike/es-utils:filter()
+      | metadata.eventType =~ in(values=["DetectionSummaryEvent", "UserActivityAuditEvent"]) // Look for detection creaton event and update events (audit)
+      | case {
+          metadata.eventType="DetectionSummaryEvent"| event.new_state := "new" | event.detection_id := rename(event.DetectId); // Detection creations
+          event.ServiceName=detections event.OperationName=detection_update event.detection_id = * // Detection updates
+      }
+      | groupBy("event.detection_id", function=[selectLast([@timestamp, "event.ComputerName", "event.UserName", "event.DetectName", "event.SeverityName", "event.Objective", "event.Tactic", "event.Technique", "event.FalconHostLink", "metadata.eventType"])])
+      | metadata.eventType != UserActivityAuditEvent
+      | "Time" := formatTime("%Y/%m/%d %H:%M:%S %Z", field=@timestamp)
+      | ComputerName := rename(event.ComputerName)
+      | UserName := rename(event.UserName)
+      | "Detect Name" := rename(event.DetectName)
+      | Severity := rename(event.SeverityName)
+      | Objective := rename(event.Objective)
+      | Tactic := rename(event.Tactic)
+      | Technique := rename(event.Technique)
+      | Detection := format("[%s](%s)", field=["event.detection_id", "event.FalconHostLink"])
+      | table(["Time", "Detection", "ComputerName", "UserName", "Detect Name", "Severity", "Objective", "Tactic", "Technique"], reverse=False)
+    visualization: table-view
+    start: 7d
+    width: 12
+    title: Detections without first-touch
+    type: query
+  bf00a5ab-0623-425b-ba61-61d754de42ed:
+    x: 0
+    y: 0
+    height: 3
+    queryString: |-
+      $crowdstrike/es-utils:filter()
+      | metadata.eventType=UserActivityAuditEvent event.ServiceName=detections event.OperationName=detection_update event.detection_id = *
+      | timeChart(event.new_state, function=count(event.detection_id, distinct=True))
+    start: 7d
+    width: 12
+    options:
+      legendPosition: right
+      series: {}
+      gradient: false
+      interpolation: step-after
+      stacking: normal
+      yAxisScale: linear
+      plotType: area
+    visualization: time-chart
+    title: State changes over time
+    type: query
+$schema: https://schemas.humio.com/dashboard/v0.2.0
